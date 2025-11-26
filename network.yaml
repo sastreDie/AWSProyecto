@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Capa de Red (VPC) para Celula 5 - Pinky y Cerebro'
+
+Resources:
+  # 1. La VPC (El contenedor principal)
+  # ----------------------------------------------------------------
+  PinkyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: Pinky-VPC-Project
+
+  # 2. Subnet Privada (Donde viven las Lambdas) [cite: 185]
+  # ----------------------------------------------------------------
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref PinkyVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: false # Importante: Las lambdas no tendrán IP pública
+      Tags:
+        - Key: Name
+          Value: Pinky-Private-Subnet
+
+  # 3. Tabla de Ruteo (Las reglas de tráfico)
+  # ----------------------------------------------------------------
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref PinkyVPC
+      Tags:
+        - Key: Name
+          Value: Pinky-Private-RT
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # 4. VPC Endpoints (El requerimiento clave de conectividad) [cite: 141, 166]
+  # ----------------------------------------------------------------
+  # Endpoint para S3 (Permite a la Lambda subir/bajar imágenes)
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref PinkyVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  # Endpoint para DynamoDB (Permite a la Lambda guardar metadatos)
+  DynamoDBEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref PinkyVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  # 5. Security Group (El firewall de la Lambda)
+  # ----------------------------------------------------------------
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG para permitir trafico interno de las Lambdas
+      VpcId: !Ref PinkyVPC
+      SecurityGroupEgress:
+        - IpProtocol: "-1" # Permitir todo el tráfico de salida (hacia los endpoints)
+          CidrIp: "0.0.0.0/0"
+
+Outputs:
+  # Estos valores los usaremos en la siguiente plantilla
+  VpcId:
+    Description: ID de la VPC creada
+    Value: !Ref PinkyVPC
+    Export:
+      Name: PinkyVpcId
+
+  PrivateSubnetId:
+    Description: ID de la Subnet Privada para las Lambdas
+    Value: !Ref PrivateSubnet
+    Export:
+      Name: PinkyPrivateSubnetId
+
+  LambdaSecurityGroupId:
+    Description: ID del Security Group para las Lambdas
+    Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: PinkyLambdaSGId
