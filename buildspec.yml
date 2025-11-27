@@ -1,0 +1,48 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "Installing dependencies..."
+      - pip install --upgrade pip
+      
+  pre_build:
+    commands:
+      - echo "Pre-build phase - Packaging Lambda functions..."
+      - cd src/lambda
+      - zip -r ../../dist/image_uploader.zip image_uploader.py
+      - zip -r ../../dist/profanity_filter.zip profanity_filter.py
+      - zip -r ../../dist/image_retrieval.zip image_retrieval.py
+      - zip -r ../../dist/generate_upload_url.zip generate_upload_url.py
+      - zip -r ../../dist/confirm_upload.zip confirm_upload.py
+      - cd ../..
+      - echo "Lambda functions packaged successfully"
+      
+  build:
+    commands:
+      - echo "Build phase - Uploading Lambda packages to S3..."
+      - aws s3 cp dist/image_uploader.zip s3://${LAMBDA_BUCKET}/lambda/image_uploader.zip
+      - aws s3 cp dist/profanity_filter.zip s3://${LAMBDA_BUCKET}/lambda/profanity_filter.zip
+      - aws s3 cp dist/image_retrieval.zip s3://${LAMBDA_BUCKET}/lambda/image_retrieval.zip
+      - aws s3 cp dist/generate_upload_url.zip s3://${LAMBDA_BUCKET}/lambda/generate_upload_url.zip
+      - aws s3 cp dist/confirm_upload.zip s3://${LAMBDA_BUCKET}/lambda/confirm_upload.zip
+      - echo "Lambda packages uploaded to S3"
+      
+  post_build:
+    commands:
+      - echo "Post-build phase - Preparing CloudFormation templates..."
+      - aws s3 cp cloudformation/iam-stack.yaml s3://${LAMBDA_BUCKET}/cloudformation/
+      - aws s3 cp cloudformation/infrastructure-stack.yaml s3://${LAMBDA_BUCKET}/cloudformation/
+      - echo "Build completed successfully"
+
+artifacts:
+  files:
+    - cloudformation/**/*
+    - dist/**/*
+  name: BuildArtifact
+
+cache:
+  paths:
+    - '/root/.cache/pip/**/*'

@@ -1,12 +1,14 @@
 """
 Lambda Function: Image Uploader
 Procesa la carga de capturas de pantalla, valida formato y almacena en S3
+Versión mejorada con validaciones robustas y mejor manejo de errores
 """
 import json
 import boto3
 import base64
 import uuid
 from datetime import datetime
+from decimal import Decimal
 import os
 
 s3_client = boto3.client('s3')
@@ -19,6 +21,7 @@ SNS_TOPIC_ARN = os.environ['SNS_TOPIC_ARN']
 
 ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp']
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MIN_FILE_SIZE = 1024  # 1KB
 
 def lambda_handler(event, context):
     try:
@@ -28,31 +31,42 @@ def lambda_handler(event, context):
         
         # Validate required fields
         if 'image' not in body or 'filename' not in body:
-            return response(400, {'error': 'Missing required fields'})
+            return response(400, {'error': 'Missing required fields: image and filename'})
         
         filename = body['filename']
         image_data = body['image']
         game_title = body.get('game_title', 'Unknown')
         description = body.get('description', '')
         
+        # Validate filename
+        if not filename or len(filename) > 255:
+            return response(400, {'error': 'Invalid filename length'})
+        
         # Validate file extension
+        if '.' not in filename:
+            return response(400, {'error': 'Filename must have an extension'})
+        
         extension = filename.split('.')[-1].lower()
         if extension not in ALLOWED_EXTENSIONS:
-            return response(400, {'error': f'Invalid file type. Allowed: {ALLOWED_EXTENSIONS}'})
+            return response(400, {'error': f'Invalid file type. Allowed: {", ".join(ALLOWED_EXTENSIONS)}'})
         
         # Decode base64 image
         try:
             image_bytes = base64.b64decode(image_data)
         except Exception as e:
+            print(f"Base64 decode error: {str(e)}")
             return response(400, {'error': 'Invalid base64 image data'})
         
         # Validate file size
-        if len(image_bytes) > MAX_FILE_SIZE:
-            return response(400, {'error': f'File too large. Max size: {MAX_FILE_SIZE} bytes'})
+        file_size = len(image_bytes)
+        if file_size < MIN_FILE_SIZE:
+            return response(400, {'error': f'File too small. Min size: {MIN_FILE_SIZE} bytes'})
+        if file_size > MAX_FILE_SIZE:
+            return response(400, {'error': f'File too large. Max size: {MAX_FILE_SIZE / (1024*1024):.1f}MB'})
         
         # Generate unique ID
         screenshot_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = int(datetime.utcnow().timestamp())
         s3_key = f"raw/{user_id}/{screenshot_id}.{extension}"
         
         # Upload to S3 Raw Bucket
@@ -77,10 +91,10 @@ def lambda_handler(event, context):
                 'filename': filename,
                 'game_title': game_title,
                 'description': description,
-                'upload_timestamp': timestamp,
-                'status': 'PROCESSING',
+                'upload_timestamp': Decimal(str(timestamp)),
+                'status': 'PENDING',
                 'raw_s3_key': s3_key,
-                'file_size': len(image_bytes),
+                'file_size': file_size,
                 'extension': extension
             }
         )
@@ -98,13 +112,19 @@ def lambda_handler(event, context):
         )
         
         return response(200, {
-            'message': 'Screenshot uploaded successfully',
+            'message': 'Screenshot uploaded successfully. Processing...',
             'screenshot_id': screenshot_id,
-            'status': 'PROCESSING'
+            'status': 'PENDING',
+            'file_size': file_size
         })
         
+    except KeyError as e:
+        print(f"Missing key: {str(e)}")
+        return response(400, {'error': f'Missing required field: {str(e)}'})
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Unexpected error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return response(500, {'error': 'Internal server error'})
 
 def response(status_code, body):

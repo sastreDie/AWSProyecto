@@ -84,6 +84,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - rekognition:DetectModerationLabels
+                  - rekognition:DetectText
                 Resource: '*'
 
   # Lambda Execution Role - Image Retrieval
