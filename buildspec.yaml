@@ -1,0 +1,324 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Screenshot Management System Infrastructure
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+    
+  BucketPrefix:
+    Type: String
+    Default: screenshot-app
+    
+  KmsKeyId:
+    Type: String
+    Description: KMS Key ID para encriptación
+
+Resources:
+
+  # ===== S3 BUCKETS =====
+  RawScreenshotsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${BucketPrefix}-raw-${Environment}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref KmsKeyId
+      VersioningConfiguration:
+        Status: Enabled
+
+  ProcessedScreenshotsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${BucketPrefix}-processed-${Environment}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref KmsKeyId
+
+  # ===== DYNAMODB TABLE =====
+  MetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub screenshots-metadata-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: screenshot_id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: screenshot_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserTimeIndex
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref KmsKeyId
+
+  # ===== SNS TOPIC =====
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub screenshot-notifications-${Environment}
+      KmsMasterKeyId: !Ref KmsKeyId
+
+  # ===== IAM ROLES =====
+  ImageUploaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource:
+                  - !Sub ${RawScreenshotsBucket.Arn}/*
+                  - !Sub ${ProcessedScreenshotsBucket.Arn}/*
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt MetadataTable.Arn
+        - PolicyName: SNSPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref NotificationTopic
+
+  ProfanityFilterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub ${RawScreenshotsBucket.Arn}/*
+                  - !Sub ${ProcessedScreenshotsBucket.Arn}/*
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt MetadataTable.Arn
+        - PolicyName: SNSPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref NotificationTopic
+
+  # ===== LAMBDA FUNCTIONS =====
+  ImageUploaderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screenshot-uploader-${Environment}
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt ImageUploaderRole.Arn
+      Timeout: 60
+      MemorySize: 1024
+      Environment:
+        Variables:
+          RAW_BUCKET: !Ref RawScreenshotsBucket
+          PROCESSED_BUCKET: !Ref ProcessedScreenshotsBucket
+          METADATA_TABLE: !Ref MetadataTable
+          SNS_TOPIC_ARN: !Ref NotificationTopic
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import logging
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          def handler(event, context):
+              logger.info(f"Evento recibido: {event}")
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({'message': 'Upload function working'})
+              }
+
+  ProfanityFilterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screenshot-filter-${Environment}
+      Runtime: python3.11
+      Handler: index.handler
+      Role: !GetAtt ProfanityFilterRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          RAW_BUCKET: !Ref RawScreenshotsBucket
+          PROCESSED_BUCKET: !Ref ProcessedScreenshotsBucket
+          METADATA_TABLE: !Ref MetadataTable
+          SNS_TOPIC_ARN: !Ref NotificationTopic
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import logging
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          def handler(event, context):
+              logger.info(f"Filtro ejecutándose: {event}")
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({'message': 'Filter function working'})
+              }
+
+  # ===== API GATEWAY =====
+  ScreenshotApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub screenshot-api-${Environment}
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  UploadResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ScreenshotApi
+      ParentId: !GetAtt ScreenshotApi.RootResourceId
+      PathPart: upload
+
+  UploadMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ScreenshotApi
+      ResourceId: !Ref UploadResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ImageUploaderFunction.Arn}/invocations
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: UploadMethod
+    Properties:
+      RestApiId: !Ref ScreenshotApi
+      StageName: !Ref Environment
+
+  # ===== CLOUDFRONT =====
+  CloudFrontOAI:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub OAI for ${AWS::StackName}
+
+  ContentDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultCacheBehavior:
+          TargetOriginId: ProcessedBucket
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: false
+          Compress: true
+        Origins:
+          - DomainName: !GetAtt ProcessedScreenshotsBucket.DomainName
+            Id: ProcessedBucket
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub origin-access-identity/cloudfront/${CloudFrontOAI}
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint
+    Value: !Sub https://${ScreenshotApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+    
+  CloudFrontDomain:
+    Description: CloudFront domain
+    Value: !GetAtt ContentDistribution.DomainName
+    
+  RawBucketName:
+    Description: Raw bucket name
+    Value: !Ref RawScreenshotsBucket
+    
+  ProcessedBucketName:
+    Description: Processed bucket name
+    Value: !Ref ProcessedScreenshotsBucket
+    
+  MetadataTableName:
+    Description: DynamoDB table name
+    Value: !Ref MetadataTable
+    
+  NotificationTopicArn:
+    Description: SNS topic ARN
+    Value: !Ref NotificationTopic
