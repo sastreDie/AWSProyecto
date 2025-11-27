@@ -27,6 +27,39 @@ Parameters:
     Description: S3 key for Image Retrieval Lambda code
 
 Resources:
+  # KMS Key for Encryption
+  EncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS key for ${ProjectName} encryption'
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow services to use the key
+            Effect: Allow
+            Principal:
+              Service:
+                - s3.amazonaws.com
+                - dynamodb.amazonaws.com
+                - sns.amazonaws.com
+                - logs.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+            Resource: '*'
+
+  EncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-key'
+      TargetKeyId: !Ref EncryptionKey
+
   # S3 Buckets
   RawScreenshotsBucket:
     Type: AWS::S3::Bucket
@@ -34,6 +67,12 @@ Resources:
       BucketName: !Sub '${ProjectName}-raw-screenshots'
       VersioningConfiguration:
         Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !GetAtt EncryptionKey.Arn
+            BucketKeyEnabled: true
       LifecycleConfiguration:
         Rules:
           - Id: DeleteOldRawScreenshots
@@ -51,12 +90,23 @@ Resources:
       BucketName: !Sub '${ProjectName}-processed-screenshots'
       VersioningConfiguration:
         Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !GetAtt EncryptionKey.Arn
+            BucketKeyEnabled: true
       CorsConfiguration:
         CorsRules:
           - AllowedOrigins: ['*']
             AllowedMethods: [GET, HEAD]
             AllowedHeaders: ['*']
             MaxAge: 3600
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
 
   # DynamoDB Table
   MetadataTable:
@@ -85,6 +135,12 @@ Resources:
             ProjectionType: ALL
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !GetAtt EncryptionKey.Arn
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
 
   # SNS Topics
   FilterTopic:
@@ -92,12 +148,14 @@ Resources:
     Properties:
       TopicName: !Sub '${ProjectName}-filter-topic'
       DisplayName: Screenshot Filter Topic
+      KmsMasterKeyId: !GetAtt EncryptionKey.Arn
 
   NotificationTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Sub '${ProjectName}-notification-topic'
       DisplayName: User Notification Topic
+      KmsMasterKeyId: !GetAtt EncryptionKey.Arn
 
   # Lambda Functions
   ImageUploaderFunction:
@@ -111,6 +169,15 @@ Resources:
       Code:
         S3Bucket: !Ref ImageUploaderCodeBucket
         S3Key: !Ref ImageUploaderCodeKey
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-LambdaSecurityGroupId'
+        SubnetIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet1Id'
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet2Id'
       Environment:
         Variables:
           RAW_BUCKET: !Ref RawScreenshotsBucket
@@ -130,6 +197,15 @@ Resources:
       Code:
         S3Bucket: !Ref ImageUploaderCodeBucket
         S3Key: !Ref ProfanityFilterCodeKey
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-LambdaSecurityGroupId'
+        SubnetIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet1Id'
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet2Id'
       Environment:
         Variables:
           RAW_BUCKET: !Ref RawScreenshotsBucket
@@ -150,6 +226,15 @@ Resources:
       Code:
         S3Bucket: !Ref ImageUploaderCodeBucket
         S3Key: !Ref ImageRetrievalCodeKey
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-LambdaSecurityGroupId'
+        SubnetIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet1Id'
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet2Id'
       Environment:
         Variables:
           METADATA_TABLE: !Ref MetadataTable

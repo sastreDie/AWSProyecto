@@ -14,18 +14,29 @@ Resources:
         - Key: Name
           Value: Pinky-VPC-Project
 
-  # 2. Subnet Privada (Donde viven las Lambdas) [cite: 185]
+  # 2. Subnets Privadas (Donde viven las Lambdas) - 2 AZs para HA
   # ----------------------------------------------------------------
-  PrivateSubnet:
+  PrivateSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref PinkyVPC
       CidrBlock: 10.0.1.0/24
       AvailabilityZone: !Select [ 0, !GetAZs '' ]
-      MapPublicIpOnLaunch: false # Importante: Las lambdas no tendrán IP pública
+      MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
-          Value: Pinky-Private-Subnet
+          Value: Pinky-Private-Subnet-1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref PinkyVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: Pinky-Private-Subnet-2
 
   # 3. Tabla de Ruteo (Las reglas de tráfico)
   # ----------------------------------------------------------------
@@ -37,10 +48,16 @@ Resources:
         - Key: Name
           Value: Pinky-Private-RT
 
-  PrivateSubnetRouteTableAssociation:
+  PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref PrivateSubnet
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
       RouteTableId: !Ref PrivateRouteTable
 
   # 4. VPC Endpoints (El requerimiento clave de conectividad) [cite: 141, 166]
