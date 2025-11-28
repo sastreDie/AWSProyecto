@@ -33,13 +33,13 @@ phases:
   post_build:
     commands:
       - echo "Post-build phase - Preparing CloudFormation templates..."
-      - aws s3 cp cloudformation/iam-stack.yaml s3://${LAMBDA_BUCKET}/cloudformation/
-      - aws s3 cp cloudformation/infrastructure-stack.yaml s3://${LAMBDA_BUCKET}/cloudformation/
+      - aws s3 cp iac/iam-stack.yaml s3://${LAMBDA_BUCKET}/iac/
+      - aws s3 cp iac/infrastructure-stack.yaml s3://${LAMBDA_BUCKET}/iac/
       - echo "Build completed successfully"
 
 artifacts:
   files:
-    - cloudformation/**/*
+    - iac/**/*
     - dist/**/*
   name: BuildArtifact
 

@@ -35,7 +35,7 @@ This deployment includes full VPC isolation, encryption, and network firewall in
 ```bash
 aws cloudformation create-stack \
   --stack-name screenshot-system-network \
-  --template-body file://cloudformation/network-stack.yaml \
+  --template-body file://iac/network-stack.yaml \
   --parameters ParameterKey=ProjectName,ParameterValue=screenshot-system \
   --capabilities CAPABILITY_IAM \
   --region us-east-1
@@ -59,7 +59,7 @@ aws cloudformation wait stack-create-complete \
 ```bash
 aws cloudformation create-stack \
   --stack-name screenshot-system-iam \
-  --template-body file://cloudformation/iam-stack.yaml \
+  --template-body file://iac/iam-stack.yaml \
   --parameters ParameterKey=ProjectName,ParameterValue=screenshot-system \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-east-1
@@ -101,7 +101,7 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 aws cloudformation create-stack \
   --stack-name screenshot-system-infra \
-  --template-body file://cloudformation/infrastructure-stack.yaml \
+  --template-body file://iac/infrastructure-stack.yaml \
   --parameters \
     ParameterKey=ProjectName,ParameterValue=screenshot-system \
     ParameterKey=ImageUploaderCodeBucket,ParameterValue=screenshot-system-lambda-code-${ACCOUNT_ID} \

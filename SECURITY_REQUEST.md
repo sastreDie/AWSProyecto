@@ -136,7 +136,7 @@ Policies (inline):
 
 ## CloudFormation Template
 
-Adjunto el template completo en `cloudformation/iam-stack.yaml` que pueden:
+Adjunto el template completo en `iac/iam-stack.yaml` que pueden:
 
 1. **Desplegar directamente** si se ajusta a sus políticas
 2. **Adaptar** a su estructura de roles existente
@@ -146,7 +146,7 @@ Adjunto el template completo en `cloudformation/iam-stack.yaml` que pueden:
 ```bash
 aws cloudformation create-stack \
   --stack-name screenshot-system-iam \
-  --template-body file://cloudformation/iam-stack.yaml \
+  --template-body file://iac/iam-stack.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameters ParameterKey=ProjectName,ParameterValue=screenshot-system
 ```
@@ -204,13 +204,13 @@ A: No, todos los servicios son públicos de AWS.
 ### ¿Quién ejecuta qué?
 
 **EQUIPO DE SEGURIDAD (ustedes):**
-1. Revisar este documento y el template `cloudformation/iam-stack.yaml`
+1. Revisar este documento y el template `iac/iam-stack.yaml`
 2. Aprobar o solicitar cambios en los permisos
 3. **Ejecutar el IAM stack** desde su cuenta con permisos administrativos:
    ```bash
    aws cloudformation create-stack \
      --stack-name screenshot-system-iam \
-     --template-body file://cloudformation/iam-stack.yaml \
+     --template-body file://iac/iam-stack.yaml \
      --capabilities CAPABILITY_NAMED_IAM \
      --parameters ParameterKey=ProjectName,ParameterValue=screenshot-system
    ```
@@ -262,6 +262,6 @@ Para dudas o ajustes a los permisos, contactar a:
 
 ## Anexos
 
-- `cloudformation/iam-stack.yaml` - Template completo de CloudFormation
+- `iac/iam-stack.yaml` - Template completo de CloudFormation
 - `DEPLOYMENT_INSTRUCTIONS.md` - Guía paso a paso del deployment
 - `ARCHITECTURE.md` - Diagrama de arquitectura del sistema

@@ -1,0 +1,451 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Infrastructure Stack for Screenshot Management System'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: screenshot-system
+    Description: Project name for resource naming
+  
+  ImageUploaderCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages
+  
+  ImageUploaderCodeKey:
+    Type: String
+    Default: lambda/image_uploader.zip
+    Description: S3 key for Image Uploader Lambda code
+  
+  ProfanityFilterCodeKey:
+    Type: String
+    Default: lambda/profanity_filter.zip
+    Description: S3 key for Profanity Filter Lambda code
+  
+  ImageRetrievalCodeKey:
+    Type: String
+    Default: lambda/image_retrieval.zip
+    Description: S3 key for Image Retrieval Lambda code
+
+Resources:
+  # KMS Key for Encryption
+  EncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS key for ${ProjectName} encryption'
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow services to use the key
+            Effect: Allow
+            Principal:
+              Service:
+                - s3.amazonaws.com
+                - dynamodb.amazonaws.com
+                - sns.amazonaws.com
+                - logs.amazonaws.com
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey'
+            Resource: '*'
+
+  EncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-key'
+      TargetKeyId: !Ref EncryptionKey
+
+  # S3 Buckets
+  RawScreenshotsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-raw-screenshots'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !GetAtt EncryptionKey.Arn
+            BucketKeyEnabled: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldRawScreenshots
+            Status: Enabled
+            ExpirationInDays: 30
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ProcessedScreenshotsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-processed-screenshots'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !GetAtt EncryptionKey.Arn
+            BucketKeyEnabled: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: ['*']
+            AllowedMethods: [GET, HEAD]
+            AllowedHeaders: ['*']
+            MaxAge: 3600
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # DynamoDB Table
+  MetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-metadata'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: screenshot_id
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: upload_timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: screenshot_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: upload_timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !GetAtt EncryptionKey.Arn
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # SNS Topics
+  FilterTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-filter-topic'
+      DisplayName: Screenshot Filter Topic
+      KmsMasterKeyId: !GetAtt EncryptionKey.Arn
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-notification-topic'
+      DisplayName: User Notification Topic
+      KmsMasterKeyId: !GetAtt EncryptionKey.Arn
+
+  # Lambda Functions
+  ImageUploaderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-image-uploader'
+      Runtime: python3.12
+      Handler: image_uploader.lambda_handler
+      Role: !ImportValue 
+        Fn::Sub: '${ProjectName}-ImageUploaderRoleArn'
+      Code:
+        S3Bucket: !Ref ImageUploaderCodeBucket
+        S3Key: !Ref ImageUploaderCodeKey
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-LambdaSecurityGroupId'
+        SubnetIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet1Id'
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet2Id'
+      Environment:
+        Variables:
+          RAW_BUCKET: !Ref RawScreenshotsBucket
+          METADATA_TABLE: !Ref MetadataTable
+          SNS_TOPIC_ARN: !Ref FilterTopic
+      Timeout: 30
+      MemorySize: 512
+
+  ProfanityFilterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-profanity-filter'
+      Runtime: python3.12
+      Handler: profanity_filter.lambda_handler
+      Role: !ImportValue 
+        Fn::Sub: '${ProjectName}-ProfanityFilterRoleArn'
+      Code:
+        S3Bucket: !Ref ImageUploaderCodeBucket
+        S3Key: !Ref ProfanityFilterCodeKey
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-LambdaSecurityGroupId'
+        SubnetIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet1Id'
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet2Id'
+      Environment:
+        Variables:
+          RAW_BUCKET: !Ref RawScreenshotsBucket
+          PROCESSED_BUCKET: !Ref ProcessedScreenshotsBucket
+          METADATA_TABLE: !Ref MetadataTable
+          NOTIFICATION_TOPIC_ARN: !Ref NotificationTopic
+      Timeout: 60
+      MemorySize: 1024
+
+  ImageRetrievalFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-image-retrieval'
+      Runtime: python3.12
+      Handler: image_retrieval.lambda_handler
+      Role: !ImportValue 
+        Fn::Sub: '${ProjectName}-ImageRetrievalRoleArn'
+      Code:
+        S3Bucket: !Ref ImageUploaderCodeBucket
+        S3Key: !Ref ImageRetrievalCodeKey
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-LambdaSecurityGroupId'
+        SubnetIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet1Id'
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-PrivateSubnet2Id'
+      Environment:
+        Variables:
+          METADATA_TABLE: !Ref MetadataTable
+          PROCESSED_BUCKET: !Ref ProcessedScreenshotsBucket
+      Timeout: 30
+      MemorySize: 512
+
+  # SNS Subscription for Profanity Filter
+  FilterTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: lambda
+      TopicArn: !Ref FilterTopic
+      Endpoint: !GetAtt ProfanityFilterFunction.Arn
+
+  # Lambda Permission for SNS
+  ProfanityFilterInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProfanityFilterFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref FilterTopic
+
+  # Cognito User Pool
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${ProjectName}-users'
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${ProjectName}-client'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # API Gateway
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${ProjectName}-api'
+      Description: Screenshot Management API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  ApiAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: CognitoAuthorizer
+      Type: COGNITO_USER_POOLS
+      IdentitySource: method.request.header.Authorization
+      RestApiId: !Ref RestApi
+      ProviderARNs:
+        - !GetAtt UserPool.Arn
+
+  # API Resources
+  UploadResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: upload
+
+  RetrieveResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: screenshots
+
+  # Upload Method
+  UploadMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref UploadResource
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ImageUploaderFunction.Arn}/invocations'
+
+  # Retrieve Method
+  RetrieveMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref RetrieveResource
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref ApiAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ImageRetrievalFunction.Arn}/invocations'
+
+  # Lambda Permissions for API Gateway
+  UploadLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ImageUploaderFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*'
+
+  RetrieveLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ImageRetrievalFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*'
+
+  # API Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - UploadMethod
+      - RetrieveMethod
+    Properties:
+      RestApiId: !Ref RestApi
+      StageName: prod
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub '${ProjectName} CDN'
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt ProcessedScreenshotsBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          Compress: true
+          DefaultTTL: 86400
+          MaxTTL: 31536000
+          MinTTL: 0
+        PriceClass: PriceClass_100
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${ProjectName}-ApiEndpoint'
+
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub '${ProjectName}-UserPoolId'
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub '${ProjectName}-UserPoolClientId'
+
+  CloudFrontDomain:
+    Description: CloudFront Distribution Domain
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub '${ProjectName}-CloudFrontDomain'
+
+  RawBucketName:
+    Description: Raw Screenshots Bucket Name
+    Value: !Ref RawScreenshotsBucket
+
+  ProcessedBucketName:
+    Description: Processed Screenshots Bucket Name
+    Value: !Ref ProcessedScreenshotsBucket
+
+  MetadataTableName:
+    Description: DynamoDB Metadata Table Name
+    Value: !Ref MetadataTable

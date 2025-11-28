@@ -17,7 +17,7 @@ Este sistema procesa capturas de pantalla de videojuegos con 3 funciones Lambda:
 
 ## Paso 1: Roles IAM (Equipo de Seguridad)
 
-Envía `cloudformation/iam-stack.yaml` al equipo de seguridad para que creen los roles necesarios.
+Envía `iac/iam-stack.yaml` al equipo de seguridad para que creen los roles necesarios.
 
 **Permisos requeridos por Lambda:**
 
@@ -54,7 +54,7 @@ Envía `cloudformation/iam-stack.yaml` al equipo de seguridad para que creen los
 # Despliega buckets S3, DynamoDB, SNS
 aws cloudformation create-stack \
   --stack-name gaming-screenshots-infra \
-  --template-body file://cloudformation/infrastructure-stack.yaml \
+  --template-body file://iac/infrastructure-stack.yaml \
   --parameters ParameterKey=ProjectName,ParameterValue=screenshot-system
 
 # Espera a que termine

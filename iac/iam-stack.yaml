@@ -1,0 +1,193 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'IAM Roles and Policies for Screenshot Management System'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: screenshot-system
+    Description: Project name for resource naming
+
+Resources:
+  # Lambda Execution Role - Image Uploader
+  ImageUploaderRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete
+    Properties:
+      RoleName: !Sub '${ProjectName}-image-uploader-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: ImageUploaderPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${ProjectName}-raw-screenshots/*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-metadata'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${ProjectName}-filter-topic'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: 'arn:aws:kms:us-east-1:912318193186:key/33694f03-047e-4386-b20f-f71aa71fb063'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+
+  # Lambda Execution Role - Profanity Filter
+  ProfanityFilterRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete
+    Properties:
+      RoleName: !Sub '${ProjectName}-profanity-filter-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: ProfanityFilterPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${ProjectName}-raw-screenshots/*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:CopyObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${ProjectName}-processed-screenshots/*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-metadata'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${ProjectName}-notification-topic'
+              - Effect: Allow
+                Action:
+                  - rekognition:DetectModerationLabels
+                  - rekognition:DetectText
+                  - rekognition:DetectLabels
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: 'arn:aws:kms:us-east-1:912318193186:key/33694f03-047e-4386-b20f-f71aa71fb063'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+
+  # Lambda Execution Role - Image Retrieval
+  ImageRetrievalRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete
+    Properties:
+      RoleName: !Sub '${ProjectName}-image-retrieval-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: ImageRetrievalPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                Resource: 
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-metadata'
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-metadata/index/*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${ProjectName}-processed-screenshots/*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: 'arn:aws:kms:us-east-1:912318193186:key/33694f03-047e-4386-b20f-f71aa71fb063'
+
+  # API Gateway Execution Role
+  ApiGatewayRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete # <--- CHANGED TO DELETE
+    Properties:
+      RoleName: !Sub '${ProjectName}-api-gateway-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+Outputs:
+  ImageUploaderRoleArn:
+    Description: ARN of Image Uploader Lambda Role
+    Value: !GetAtt ImageUploaderRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-ImageUploaderRoleArn'
+
+  ProfanityFilterRoleArn:
+    Description: ARN of Profanity Filter Lambda Role
+    Value: !GetAtt ProfanityFilterRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-ProfanityFilterRoleArn'
+
+  ImageRetrievalRoleArn:
+    Description: ARN of Image Retrieval Lambda Role
+    Value: !GetAtt ImageRetrievalRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-ImageRetrievalRoleArn'
+
+  ApiGatewayRoleArn:
+    Description: ARN of API Gateway Role
+    Value: !GetAtt ApiGatewayRole.Arn
+    Export:
+      Name: !Sub '${ProjectName}-ApiGatewayRoleArn'

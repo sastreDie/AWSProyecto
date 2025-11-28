@@ -67,7 +67,7 @@ git push -u origin main
 ```bash
 aws cloudformation create-stack \
   --stack-name screenshot-system-pipeline \
-  --template-body file://cloudformation/pipeline-stack.yaml \
+  --template-body file://iac/pipeline-stack.yaml \
   --parameters \
     ParameterKey=ProjectName,ParameterValue=screenshot-system \
     ParameterKey=GitHubRepo,ParameterValue=YOUR_USERNAME/YOUR_REPO \
