@@ -47,6 +47,11 @@ Resources:
                 Action:
                   - kms:Decrypt
                   - kms:GenerateDataKey
+                Resource: 'arn:aws:kms:us-east-1:912318193186:key/33694f03-047e-4386-b20f-f71aa71fb063'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
                   - kms:DescribeKey
                 Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
 
@@ -99,6 +104,11 @@ Resources:
                 Action:
                   - kms:Decrypt
                   - kms:GenerateDataKey
+                Resource: 'arn:aws:kms:us-east-1:912318193186:key/33694f03-047e-4386-b20f-f71aa71fb063'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
                   - kms:DescribeKey
                 Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
 
@@ -138,8 +148,8 @@ Resources:
               - Effect: Allow
                 Action:
                   - kms:Decrypt
-                  - kms:DescribeKey
-                Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+                  - kms:GenerateDataKey
+                Resource: 'arn:aws:kms:us-east-1:912318193186:key/33694f03-047e-4386-b20f-f71aa71fb063'
 
   # API Gateway Execution Role
   ApiGatewayRole:
